@@ -27,7 +27,7 @@ import { ITelemetryService } from '../../../telemetry/common/telemetry.js';
 import { AgentHostConfigKey, agentHostCustomizationConfigSchema } from '../../common/agentHostCustomizationConfig.js';
 import type { ChatInputRequestWithPlanReview, IAgentHostPlanReviewAction } from '../../common/agentHostPlanReview.js';
 import { AgentHostSandboxConfigKey, sandboxConfigSchema } from '../../common/sandboxConfigSchema.js';
-import { AgentHostGlobalAutoApproveEnabledConfigKey, platformRootSchema, platformSessionSchema } from '../../common/agentHostSchema.js';
+import { AgentHostGlobalAutoApproveEnabledConfigKey, AgentHostAutoReplyEnabledConfigKey, platformRootSchema, platformSessionSchema } from '../../common/agentHostSchema.js';
 import { AgentSignal, IMcpNotification, IRestoredSubagentSession } from '../../common/agentService.js';
 import { stripRedundantCdPrefix } from '../../common/commandLineHelpers.js';
 import { toToolCallMeta, type IToolCallMeta, type IToolCallUiMeta } from '../../common/meta/agentToolCallMeta.js';
@@ -1050,7 +1050,18 @@ export class CopilotAgentSession extends Disposable {
 		const slashCommand = parseLeadingSlashCommand(prompt);
 		if (slashCommand?.command === 'compact') {
 			try {
-				await this._wrapper.session.rpc.history.compact();
+				const result = await this._wrapper.session.rpc.history.compact();
+				// Compaction reduces the number of tokens currently occupying the context window. Report the
+				// new occupancy so the context-usage widget refreshes immediately. Emitted before
+				// `_completeActiveTurn` since the reducer drops usage for a non-active turn.
+				const usedTokens = result.contextWindow?.currentTokens;
+				if (typeof usedTokens === 'number') {
+					this._emitAction({
+						type: ActionType.ChatUsage,
+						turnId: this._turnId,
+						usage: { inputTokens: usedTokens, outputTokens: 0, model: this._lastSeenModelId },
+					});
+				}
 				this.emitInitialMarkdown(localize('copilotAgent.compactionCompleted', "Compaction completed"));
 			} catch (err) {
 				if (getErrorMessage(err).toLowerCase().includes('nothing to compact')) {
@@ -1119,6 +1130,12 @@ export class CopilotAgentSession extends Disposable {
 							result.command,
 							result.options.map(option => option.name).join(', '),
 						));
+						break;
+					default:
+						// The runtime can be newer than these compiled SDK types, so an
+						// unknown kind must be logged rather than silently swallowed (the
+						// turn would otherwise complete with no user-facing output).
+						this._logService.warn(`[Copilot:${this.sessionId}] Unhandled slash command result kind: ${(result as { kind: string }).kind}`);
 						break;
 				}
 				if (result.runtimeSettingsChanged === true) {
@@ -1377,6 +1394,13 @@ export class CopilotAgentSession extends Disposable {
 	 */
 	private _isAutopilotMode(): boolean {
 		return this._configurationService.getEffectiveValue(this.sessionUri.toString(), platformSessionSchema, SessionConfigKey.Mode) === 'autopilot';
+	}
+
+	/**
+	 * Whether VS Code's auto-reply setting is enabled in the root config.
+	 */
+	private _isAutoReplyEnabled(): boolean {
+		return this._configurationService.getRootValue(platformRootSchema, AgentHostAutoReplyEnabledConfigKey) === true;
 	}
 
 	async sendSteering(steeringMessage: PendingMessage): Promise<void> {
@@ -2017,16 +2041,14 @@ export class CopilotAgentSession extends Disposable {
 	// ---- user input handling ------------------------------------------------
 
 	/**
-	 * Handles a user input request from the SDK (ask_user tool) by firing a
-	 * `user_input_request` progress event and waiting for the renderer to
-	 * respond via {@link respondToUserInputRequest}.
+	 * Handles a user input request from the SDK (ask_user tool). Auto-answers when the user is unavailable; otherwise waits for the renderer to respond via {@link respondToUserInputRequest}.
 	 */
 	private async _handleUserInputRequest(
 		request: UserInputRequest,
 		_invocation: { sessionId: string },
 	): Promise<UserInputResponse> {
 		const isAutopilot = this._isAutopilotMode();
-		if (isAutopilot) {
+		if (isAutopilot || this._isAutoReplyEnabled()) {
 			return {
 				answer: 'The user is not available to answer your question. Choose a pragmatic option best aligned with the context of the request.',
 				wasFreeform: true,
@@ -2355,6 +2377,10 @@ export class CopilotAgentSession extends Disposable {
 						content: notification.content,
 					},
 				});
+				return;
+			}
+			if (!notification.startsTurn) {
+				this._logService.trace(`[Copilot:${sessionId}] Ignoring passive system.notification kind=${e.data.kind.type} without an active turn`);
 				return;
 			}
 
