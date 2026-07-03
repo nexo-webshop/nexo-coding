@@ -121,6 +121,18 @@ export interface IGitHubAssetOptions {
 	name: string | ((name: string) => boolean);
 	checksumSha256?: string;
 	verbose?: boolean;
+	/**
+	 * When set, ignore {@link IGitHubAssetOptions.version} and resolve the asset from the latest
+	 * published GitHub release (including pre-releases) instead of a specific tagged release.
+	 */
+	latest?: boolean;
+}
+
+interface IGitHubRelease {
+	tag_name?: string;
+	draft?: boolean;
+	published_at?: string;
+	assets: { name: string; url: string }[];
 }
 
 /**
@@ -130,15 +142,36 @@ export interface IGitHubAssetOptions {
  * @returns a stream with the asset as file
  */
 export function fetchGithub(repo: string, options: IGitHubAssetOptions): Stream {
-	return fetchUrls(`/repos/${repo.replace(/^\/|\/$/g, '')}/releases/tags/v${options.version}`, {
+	const cleanRepo = repo.replace(/^\/|\/$/g, '');
+	// When `latest` is set, list all releases and pick the most recently published one (ignoring the
+	// requested version). Otherwise fetch the specific tagged release.
+	const releaseUrl = options.latest
+		? `/repos/${cleanRepo}/releases?per_page=100`
+		: `/repos/${cleanRepo}/releases/tags/v${options.version}`;
+	return fetchUrls(releaseUrl, {
 		base: 'https://api.github.com',
 		verbose: options.verbose,
 		nodeFetchOptions: { headers: ghApiHeaders }
 	}).pipe(through2.obj(async function (file, _enc, callback) {
+		const json = JSON.parse(file.contents.toString());
+		let release: IGitHubRelease;
+		if (options.latest) {
+			// Pick the most recently published non-draft release. Sort by `published_at` (when the
+			// release was made public) rather than `created_at` (when the draft was first created).
+			const releases = (json as IGitHubRelease[])
+				.filter(r => !r.draft)
+				.sort((a, b) => Date.parse(b.published_at ?? '') - Date.parse(a.published_at ?? ''));
+			if (releases.length === 0) {
+				return callback(new Error(`Could not find a release in ${repo}`));
+			}
+			release = releases[0];
+		} else {
+			release = json;
+		}
 		const assetFilter = typeof options.name === 'string' ? (name: string) => name === options.name : options.name;
-		const asset = JSON.parse(file.contents.toString()).assets.find((a: { name: string }) => assetFilter(a.name));
+		const asset = release.assets.find(a => assetFilter(a.name));
 		if (!asset) {
-			return callback(new Error(`Could not find asset in release of ${repo} @ ${options.version}`));
+			return callback(new Error(`Could not find asset in release of ${repo} @ ${options.latest ? release.tag_name : options.version}`));
 		}
 		try {
 			callback(null, await fetchUrl(asset.url, {
