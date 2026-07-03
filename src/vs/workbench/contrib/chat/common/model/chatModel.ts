@@ -1978,7 +1978,7 @@ export function normalizeSerializableChatData(raw: ISerializableChatDataIn): ISe
 		};
 	}
 
-	return raw;
+	return { ...raw, customTitle: raw.customTitle };
 }
 
 function normalizeOldFields(raw: ISerializableChatDataIn): void {
