@@ -174,7 +174,7 @@ registerAction2(class extends Action2 {
 					ContextKeyExpr.equals('config.agents.voice.enabled', true),
 					ChatContextKeys.location.isEqualTo(ChatAgentLocation.Chat),
 					ChatContextKeys.currentlyEditing.negate(),
-					AGENTS_VOICE_ACTIVE.negate(),
+					AGENTS_VOICE_LISTENING.negate(),
 					AGENTS_VOICE_CONNECTING.negate(),
 				),
 				group: 'navigation',
@@ -215,7 +215,7 @@ registerAction2(class extends Action2 {
 			icon: Codicon.voiceMode,
 			precondition: ContextKeyExpr.and(
 				ContextKeyExpr.equals('config.agents.voice.enabled', true),
-				AGENTS_VOICE_ACTIVE.isEqualTo(true),
+				AGENTS_VOICE_LISTENING.isEqualTo(true),
 			),
 			menu: {
 				id: MenuId.ChatExecute,
@@ -223,7 +223,7 @@ registerAction2(class extends Action2 {
 					ContextKeyExpr.equals('config.agents.voice.enabled', true),
 					ChatContextKeys.location.isEqualTo(ChatAgentLocation.Chat),
 					ChatContextKeys.currentlyEditing.negate(),
-					AGENTS_VOICE_ACTIVE.isEqualTo(true),
+					AGENTS_VOICE_LISTENING.isEqualTo(true),
 					AGENTS_VOICE_INITIATED_HERE.isEqualTo(true),
 				),
 				group: 'navigation',
@@ -235,24 +235,17 @@ registerAction2(class extends Action2 {
 				when: ContextKeyExpr.and(
 					ContextKeyExpr.equals('config.agents.voice.enabled', true),
 					ChatContextKeys.inChatInput,
-					AGENTS_VOICE_ACTIVE.isEqualTo(true),
+					AGENTS_VOICE_LISTENING.isEqualTo(true),
 				),
 			},
 		});
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
 		const voiceController = accessor.get(IVoiceSessionController);
-		// In auto-send mode, toggling voice mode off disconnects entirely.
-		// The auto-listen loop means there's no natural "idle" state to return to.
-		const configService = accessor.get(IConfigurationService);
-		const autoSendDelay = configService.getValue<number>('agents.voice.autoSendDelay') ?? 500;
-		if (autoSendDelay >= 0) {
-			voiceController.disconnect();
-		} else {
-			// Manual mode: just stop recording
-			voiceController.pttDown();
-			voiceController.pttUp();
-		}
+		// Stop recording and the auto-listen loop but keep the WebSocket
+		// connected so the user can resume without reconnecting. Use the
+		// separate "Disconnect Voice Mode" button to fully end the session.
+		voiceController.stopListening();
 	}
 });
 
@@ -269,6 +262,18 @@ registerAction2(class extends Action2 {
 				ContextKeyExpr.equals('config.agents.voice.enabled', true),
 				AGENTS_VOICE_CONNECTED.isEqualTo(true),
 			),
+			menu: {
+				id: MenuId.ChatExecute,
+				when: ContextKeyExpr.and(
+					ContextKeyExpr.equals('config.agents.voice.enabled', true),
+					ChatContextKeys.location.isEqualTo(ChatAgentLocation.Chat),
+					ChatContextKeys.currentlyEditing.negate(),
+					AGENTS_VOICE_CONNECTED.isEqualTo(true),
+					AGENTS_VOICE_INITIATED_HERE.isEqualTo(true),
+				),
+				group: 'navigation',
+				order: -9
+			},
 		});
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
@@ -451,6 +456,54 @@ configurationRegistry.registerConfiguration({
 			type: 'string',
 			description: nls.localize('agents.voice.sendKeyword', "A keyword phrase (e.g. \"send it\") that, when spoken at the end of an utterance in toggle mode, triggers sending the request immediately. The keyword is stripped from the sent message. Leave empty to disable."),
 			default: '',
+			scope: ConfigurationScope.APPLICATION,
+			included: false,
+			tags: ['advanced'],
+		},
+		'agents.voice.turn.autoEndMode': {
+			type: 'string',
+			enum: ['off', 'vad', 'phrase', 'both'],
+			enumDescriptions: [
+				nls.localize('agents.voice.turn.autoEndMode.off', "Never end the turn automatically; it ends only when you release push-to-talk."),
+				nls.localize('agents.voice.turn.autoEndMode.vad', "End the turn automatically after a period of trailing silence (see `agents.voice.turn.silenceMs`)."),
+				nls.localize('agents.voice.turn.autoEndMode.phrase', "End the turn automatically when a stop phrase is spoken (see `agents.voice.turn.stopPhrases`)."),
+				nls.localize('agents.voice.turn.autoEndMode.both', "End the turn automatically on either trailing silence or a spoken stop phrase."),
+			],
+			description: nls.localize('agents.voice.turn.autoEndMode', "Controls whether the voice backend ends a held turn on its own while push-to-talk is held."),
+			default: 'off',
+			scope: ConfigurationScope.APPLICATION,
+			included: false,
+			tags: ['advanced'],
+		},
+		'agents.voice.turn.silenceMs': {
+			type: 'number',
+			description: nls.localize('agents.voice.turn.silenceMs', "Trailing silence in milliseconds before the backend ends the turn when `agents.voice.turn.autoEndMode` is `vad` or `both`. The backend clamps this to its supported range (currently 200–5000 ms) and is the source of truth."),
+			default: 800,
+			minimum: 200,
+			maximum: 5000,
+			scope: ConfigurationScope.APPLICATION,
+			included: false,
+			tags: ['advanced'],
+		},
+		'agents.voice.turn.stopPhrases': {
+			type: 'array',
+			items: { type: 'string' },
+			description: nls.localize('agents.voice.turn.stopPhrases', "Phrases that end the turn when spoken at the end of an utterance and `agents.voice.turn.autoEndMode` is `phrase` or `both`. The backend strips the matched phrase from the transcript before it reaches the agent."),
+			default: ['send it'],
+			scope: ConfigurationScope.APPLICATION,
+			included: false,
+			tags: ['advanced'],
+		},
+		'agents.voice.turn.vadGateAsr': {
+			type: 'string',
+			enum: ['default', 'on', 'off'],
+			enumDescriptions: [
+				nls.localize('agents.voice.turn.vadGateAsr.default', "Let the backend decide (gates speech recognition only when `agents.voice.turn.autoEndMode` is `off`)."),
+				nls.localize('agents.voice.turn.vadGateAsr.on', "Always gate: only forward audio to speech recognition when the backend voice-activity detector hears speech."),
+				nls.localize('agents.voice.turn.vadGateAsr.off', "Never gate: forward all captured audio to speech recognition."),
+			],
+			description: nls.localize('agents.voice.turn.vadGateAsr', "Controls voice-activity noise-gating of the audio sent to speech recognition."),
+			default: 'default',
 			scope: ConfigurationScope.APPLICATION,
 			included: false,
 			tags: ['advanced'],
