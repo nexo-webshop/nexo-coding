@@ -186,7 +186,7 @@ function createProviderWithConfig(
 		acquireOrLoadSession: async () => undefined,
 		sendRequest: async (): Promise<ChatSendResult> => ({ kind: 'sent' as const, data: {} as IChatSendRequestData }),
 		removeHistoryEntry: async (resource: URI) => { model.removeSession(resource); },
-		setChatSessionTitle: () => { },
+		setChatSessionTitle: async () => { },
 	});
 	instantiationService.stub(IChatWidgetService, {
 		openSession: async () => undefined,
@@ -260,7 +260,7 @@ function createProviderForSendTests(
 		acquireOrLoadSession: async () => undefined,
 		sendRequest: sendRequest,
 		removeHistoryEntry: async (resource: URI) => { model.removeSession(resource); },
-		setChatSessionTitle: () => { },
+		setChatSessionTitle: async () => { },
 	});
 	instantiationService.stub(IChatWidgetService, {
 		openSession: async () => new class extends mock<IChatWidget>() {
