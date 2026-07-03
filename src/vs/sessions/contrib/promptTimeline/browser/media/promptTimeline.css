@@ -1,0 +1,264 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.prompt-timeline-rail {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: var(--prompt-timeline-bottom, 0);
+	width: 36px;
+	pointer-events: none;
+	z-index: 10;
+}
+
+.prompt-timeline-rail.hidden {
+	display: none;
+}
+
+/* Not enough vertical room even at minimal spacing: hide the ticks but keep the rail laid out so its ResizeObserver can detect it fits again. */
+.prompt-timeline-rail.overflowing .prompt-timeline-surface {
+	display: none;
+}
+
+/* Hover surface capturing pointer events, inset from the transcript scrollbar. */
+.prompt-timeline-surface {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 0;
+	right: 4px;
+	pointer-events: auto;
+}
+
+.prompt-timeline-ticks {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	flex-direction: column;
+	align-items: stretch;
+	justify-content: center;
+	padding: 12px 0;
+	box-sizing: border-box;
+	overflow: visible;
+	pointer-events: none;
+}
+
+/* Dense gray markers at rest. Only the mark under the pointer (or keyboard focus) expands to a 24px slot and reveals its diff colors; every other mark stays gray and dense. */
+.prompt-timeline-tick {
+	flex: 0 0 8px;
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	padding: 0;
+	padding-right: 9px;
+	border: none;
+	background: transparent;
+	cursor: pointer;
+	pointer-events: auto;
+	transition: flex-basis 150ms cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+
+.prompt-timeline-tick:hover,
+.prompt-timeline-tick:focus-visible {
+	flex-basis: 24px;
+}
+
+.prompt-timeline-tick-bar {
+	display: flex;
+	width: 16px;
+	height: 3px;
+	border-radius: 2px;
+	overflow: hidden;
+	background-color: var(--vscode-scrollbarSlider-background);
+	opacity: 1;
+	transition: width 150ms ease, height 150ms ease, border-radius 150ms ease, background-color 150ms ease;
+}
+
+/* Inner segments carry the add/removed split; gray until the mark is expanded. */
+.prompt-timeline-tick-bar .seg-add,
+.prompt-timeline-tick-bar .seg-del {
+	height: 100%;
+	background-color: var(--vscode-scrollbarSlider-background);
+	transition: background-color 150ms ease;
+}
+
+/* The expanded (hovered/focused) mark grows to a fat pill and reveals its diff colors. */
+.prompt-timeline-tick:hover .prompt-timeline-tick-bar,
+.prompt-timeline-tick:focus-visible .prompt-timeline-tick-bar {
+	width: 22px;
+	height: 10px;
+	border-radius: 5px;
+}
+
+.prompt-timeline-tick:hover .prompt-timeline-tick-bar .seg-add,
+.prompt-timeline-tick:focus-visible .prompt-timeline-tick-bar .seg-add {
+	background-color: var(--vscode-gitDecoration-addedResourceForeground, var(--vscode-charts-green));
+}
+
+.prompt-timeline-tick:hover .prompt-timeline-tick-bar .seg-del,
+.prompt-timeline-tick:focus-visible .prompt-timeline-tick-bar .seg-del {
+	background-color: var(--vscode-gitDecoration-deletedResourceForeground, var(--vscode-charts-red));
+}
+
+/* Active = the prompt currently in view: a solid blue mark, even while dense or expanded. */
+.prompt-timeline-tick.active .prompt-timeline-tick-bar {
+	background-color: var(--vscode-focusBorder);
+}
+
+.prompt-timeline-tick.active .prompt-timeline-tick-bar .seg-add,
+.prompt-timeline-tick.active .prompt-timeline-tick-bar .seg-del {
+	background-color: transparent;
+}
+
+/* Focus ring hugs the small visible bar, never the invisible 24px hit area. Scoped under .prompt-timeline-rail so it beats the workbench global `.monaco-workbench button:focus` outline (which would box the whole target). */
+.prompt-timeline-rail .prompt-timeline-tick:focus {
+	outline: none;
+}
+
+.prompt-timeline-rail .prompt-timeline-tick:focus-visible .prompt-timeline-tick-bar {
+	outline: 2px solid var(--vscode-focusBorder);
+	outline-offset: 2px;
+}
+
+/* Interactive hover/focus card: prompt text, clickable diff stat, and files. */
+.prompt-timeline-card {
+	position: absolute;
+	right: 44px;
+	width: 280px;
+	background-color: var(--vscode-editorHoverWidget-background);
+	color: var(--vscode-editorHoverWidget-foreground);
+	border: 1px solid var(--vscode-editorHoverWidget-border);
+	border-radius: 6px;
+	box-shadow: 0 2px 8px var(--vscode-widget-shadow);
+	pointer-events: auto;
+	overflow: hidden;
+	z-index: 20;
+}
+
+.prompt-timeline-card.hidden {
+	display: none;
+}
+
+.prompt-timeline-card-head {
+	padding: 8px 10px;
+}
+
+.prompt-timeline-card-text {
+	font-size: 12px;
+	margin-bottom: 4px;
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+}
+
+.prompt-timeline-card-meta {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+}
+
+.prompt-timeline-card-diff-action {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	margin-top: 6px;
+	margin-left: -7px;
+	padding: 3px 7px;
+	border: 1px solid transparent;
+	border-radius: 5px;
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+	cursor: pointer;
+}
+
+.prompt-timeline-card-diff-action:hover {
+	background-color: var(--vscode-list-hoverBackground);
+	border-color: var(--vscode-focusBorder);
+}
+
+.prompt-timeline-card-diff-action:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 1px;
+}
+
+.prompt-timeline-card-diff-action-chevron {
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+}
+
+.prompt-timeline-card-diff-action:hover .prompt-timeline-card-diff-action-chevron {
+	color: var(--vscode-focusBorder);
+}
+
+.prompt-timeline-card-no-edits {
+	margin-top: 6px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+}
+
+.prompt-timeline-card-stat .added,
+.prompt-timeline-card-fstat .added {
+	color: var(--vscode-gitDecoration-addedResourceForeground, var(--vscode-charts-green));
+}
+
+.prompt-timeline-card-stat .removed,
+.prompt-timeline-card-fstat .removed {
+	color: var(--vscode-gitDecoration-deletedResourceForeground, var(--vscode-charts-red));
+	margin-left: 4px;
+}
+
+.prompt-timeline-card-files {
+	border-top: 1px solid var(--vscode-editorHoverWidget-border);
+	margin-top: 8px;
+	max-height: 140px;
+	overflow-y: auto;
+}
+
+.prompt-timeline-card-file {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	padding: 4px 10px;
+	border: none;
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+	font-size: 11px;
+	text-align: left;
+}
+
+.prompt-timeline-card-file:hover {
+	background-color: var(--vscode-list-hoverBackground);
+}
+
+.prompt-timeline-card-file:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.prompt-timeline-card-fname {
+	flex: 1;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.prompt-timeline-card-fstat {
+	font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.prompt-timeline-tick,
+	.prompt-timeline-tick-bar,
+	.prompt-timeline-tick-bar .seg-add,
+	.prompt-timeline-tick-bar .seg-del {
+		transition: none;
+	}
+}
